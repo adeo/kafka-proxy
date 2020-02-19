@@ -3,10 +3,12 @@ package proxy
 import (
 	"context"
 	"fmt"
-	"github.com/grepplabs/kafka-proxy/pkg/apis"
-	"github.com/grepplabs/kafka-proxy/proxy/protocol"
 	"strconv"
 	"strings"
+
+	"github.com/grepplabs/kafka-proxy/pkg/apis"
+	"github.com/grepplabs/kafka-proxy/proxy/protocol"
+	"github.com/sirupsen/logrus"
 )
 
 type LocalSaslAuth interface {
@@ -25,6 +27,7 @@ func NewLocalSaslPlain(localAuthenticator apis.PasswordAuthenticator) *LocalSasl
 
 // implements LocalSaslAuth
 func (p *LocalSaslPlain) doLocalAuth(saslAuthBytes []byte) (err error) {
+
 	tokens := strings.Split(string(saslAuthBytes), "\x00")
 	if len(tokens) != 3 {
 		return fmt.Errorf("invalid SASL/PLAIN request: expected 3 tokens, got %d", len(tokens))
@@ -33,7 +36,8 @@ func (p *LocalSaslPlain) doLocalAuth(saslAuthBytes []byte) (err error) {
 		return protocol.PacketDecodingError{Info: "Listener authenticator is not set"}
 	}
 
-	// logrus.Infof("user: %s , password: %s", tokens[1], tokens[2])
+	logrus.Infof("user: %s , password: %s", tokens[1], tokens[2])
+
 	ok, status, err := p.localAuthenticator.Authenticate(tokens[1], tokens[2])
 	if err != nil {
 		proxyLocalAuthTotal.WithLabelValues("error", "1").Inc()

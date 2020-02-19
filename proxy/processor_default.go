@@ -3,17 +3,33 @@ package proxy
 import (
 	"errors"
 	"fmt"
-	"github.com/grepplabs/kafka-proxy/proxy/protocol"
-	"github.com/sirupsen/logrus"
+
 	"io"
 	"strconv"
 	"time"
+
+	"github.com/grepplabs/kafka-proxy/proxy/protocol"
+	"github.com/sirupsen/logrus"
 )
 
 type DefaultRequestHandler struct {
 }
 
 type DefaultResponseHandler struct {
+}
+
+func extractUsername(conn DeadlineReaderWriter, readKeyVersionBuf []byte) (username string, err error) {
+	err = conn.SetReadDeadline(time.Time{})
+	if err != nil {
+		return username, err
+	}
+
+	sizeBuf := make([]byte, 4) // Size => int32
+	if _, err = io.ReadFull(conn, sizeBuf); err != nil {
+		return username, err
+	}
+
+	return string(sizeBuf), nil
 }
 
 func (handler *DefaultRequestHandler) handleRequest(dst DeadlineWriter, src DeadlineReaderWriter, ctx *RequestsLoopContext) (readErr bool, err error) {
@@ -33,6 +49,7 @@ func (handler *DefaultRequestHandler) handleRequest(dst DeadlineWriter, src Dead
 	if err = protocol.Decode(keyVersionBuf, requestKeyVersion); err != nil {
 		return true, err
 	}
+	ctx.auditLog.requestApiKeyVersion = requestKeyVersion
 	logrus.Debugf("Kafka request key %v, version %v, length %v", requestKeyVersion.ApiKey, requestKeyVersion.ApiVersion, requestKeyVersion.Length)
 
 	if requestKeyVersion.ApiKey < minRequestApiKey || requestKeyVersion.ApiKey > maxRequestApiKey {
@@ -78,6 +95,8 @@ func (handler *DefaultRequestHandler) handleRequest(dst DeadlineWriter, src Dead
 			}
 		}
 	}
+
+	auditRequest(ctx)
 
 	// send inFlightRequest to channel before myCopyN to prevent race condition in proxyResponses
 	if err = sendRequestKeyVersion(ctx.openRequestsChannel, openRequestSendTimeout, requestKeyVersion); err != nil {
@@ -218,4 +237,15 @@ func receiveRequestKeyVersion(openRequestsChannel <-chan protocol.RequestKeyVers
 		}
 	}
 	return &request, nil
+}
+
+func auditRequest(ctx *RequestsLoopContext) {
+	requestLogger := logrus.WithFields(logrus.Fields{
+		"usernameme":  ctx.auditLog.username,
+		"ip_addr":     ctx.auditLog.conn.RemoteAddr().String(),
+		"api_key":     ctx.auditLog.requestApiKeyVersion.ApiKey,
+		"topic":       ctx.auditLog.topicName,
+		"api_version": ctx.auditLog.requestApiKeyVersion.ApiVersion,
+		"api_length":  ctx.auditLog.requestApiKeyVersion.Length})
+	requestLogger.Info("audit request")
 }

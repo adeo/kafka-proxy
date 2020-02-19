@@ -3,9 +3,13 @@ package proxy
 import (
 	"encoding/binary"
 	"fmt"
-	"github.com/grepplabs/kafka-proxy/proxy/protocol"
 	"io"
 	"time"
+
+	"github.com/grepplabs/kafka-proxy/proxy/protocol"
+	"github.com/sirupsen/logrus"
+
+	"strings"
 )
 
 type SaslAuthV0RequestHandler struct {
@@ -15,7 +19,7 @@ type SaslAuthV0ResponseHandler struct {
 }
 
 func (handler *SaslAuthV0RequestHandler) handleRequest(dst DeadlineWriter, src DeadlineReaderWriter, ctx *RequestsLoopContext) (readErr bool, err error) {
-	if readErr, err = copySaslAuthRequest(dst, src, ctx.timeout, ctx.buf); err != nil {
+	if readErr, err = copySaslAuthRequest(dst, src, ctx); err != nil {
 		return readErr, err
 	}
 	if err = ctx.putNextHandlers(defaultRequestHandler, defaultResponseHandler); err != nil {
@@ -31,8 +35,10 @@ func (handler *SaslAuthV0ResponseHandler) handleResponse(dst DeadlineWriter, src
 	return false, nil // nextResponse
 }
 
-func copySaslAuthRequest(dst DeadlineWriter, src DeadlineReader, timeout time.Duration, buf []byte) (readErr bool, err error) {
-	requestDeadline := time.Now().Add(timeout)
+func copySaslAuthRequest(dst DeadlineWriter, src DeadlineReader, ctx *RequestsLoopContext) (readErr bool, err error) {
+	// timeout time.Duration
+	// , buf []byte
+	requestDeadline := time.Now().Add(ctx.timeout)
 	err = dst.SetWriteDeadline(requestDeadline)
 	if err != nil {
 		return false, err
@@ -51,13 +57,31 @@ func copySaslAuthRequest(dst DeadlineWriter, src DeadlineReader, timeout time.Du
 	if int32(length) > protocol.MaxRequestSize {
 		return true, protocol.PacketDecodingError{Info: fmt.Sprintf("auth message of length %d too large", length)}
 	}
-	//logrus.Printf("SASL auth request length %v", length)
+	logrus.Debugf("SASL auth request length %v", length)
+
+	resp := make([]byte, int(length))
+	if _, err = io.ReadFull(src, resp); err != nil {
+		return true, err
+	}
+	// payload := bytes.Join([][]byte{sizeBuf[4:], resp}, nil)
+
+	// saslReqV0orV1 := &protocol.SaslHandshakeRequestV0orV1{Version: 0}
+	// req := &protocol.Request{Body: saslReqV0orV1}
+	// if err = protocol.Decode(payload, req); err != nil {
+	// 	return true, err
+	// }
+
+	tokens := strings.Split(string(resp), "\x00")
+
+	logrus.Debugf("SASL usernme: %s", tokens[1])
+
+	ctx.auditLog.username = tokens[1]
 
 	// write - send to broker
 	if _, err = dst.Write(sizeBuf); err != nil {
 		return false, err
 	}
-	if readErr, err = myCopyN(dst, src, int64(length), buf); err != nil {
+	if readErr, err = myCopyN(dst, src, int64(length), ctx.buf); err != nil {
 		return readErr, err
 	}
 	return false, nil

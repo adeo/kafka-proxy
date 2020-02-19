@@ -2,9 +2,11 @@ package proxy
 
 import (
 	"errors"
+	"net"
+	"time"
+
 	"github.com/grepplabs/kafka-proxy/config"
 	"github.com/grepplabs/kafka-proxy/proxy/protocol"
-	"time"
 )
 
 const (
@@ -28,6 +30,8 @@ var (
 	defaultResponseHandler    = &DefaultResponseHandler{}
 	saslAuthV0RequestHandler  = &SaslAuthV0RequestHandler{}
 	saslAuthV0ResponseHandler = &SaslAuthV0ResponseHandler{}
+	auditRequestHandler       = &AuditRequestHandler{}
+	auditResponseHandler      = &AuditResponseHandler{}
 )
 
 type ProcessorConfig struct {
@@ -59,6 +63,13 @@ type processor struct {
 	forbiddenApiKeys map[int16]struct{}
 	// metrics
 	brokerAddress string
+}
+
+type AuditLog struct {
+	username             string
+	requestApiKeyVersion *protocol.RequestKeyVersion
+	topicName            string
+	conn                 net.Conn
 }
 
 func newProcessor(cfg ProcessorConfig, brokerAddress string) *processor {
@@ -124,6 +135,8 @@ func (p *processor) RequestsLoop(dst DeadlineWriter, src DeadlineReaderWriter) (
 		buf:                        make([]byte, p.requestBufferSize),
 		localSasl:                  p.localSasl,
 		localSaslDone:              false, // sequential processing - mutex is required
+		// ip:                         src.(*net.TCPConn).RemoteAddr().String(),
+		auditLog: &AuditLog{conn: src.(*net.TCPConn)},
 	}
 
 	return ctx.requestsLoop(dst, src)
@@ -141,6 +154,7 @@ type RequestsLoopContext struct {
 
 	localSasl     *LocalSasl
 	localSaslDone bool
+	auditLog      *AuditLog
 }
 
 // used by local authentication
